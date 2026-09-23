@@ -25,7 +25,6 @@ from urllib.parse import urlparse
 
 from jinja2 import ChoiceLoader, FunctionLoader
 from tornado import ioloop
-from tornado.httpclient import HTTPRequest
 from tornado.web import RequestHandler
 from traitlets import (
     Any,
@@ -491,24 +490,26 @@ class SingleUserNotebookAppMixin(Configurable):
 
         async def notify():
             self.log.debug("Notifying Hub of activity %s", last_activity_timestamp)
-            req = HTTPRequest(
-                url=self.hub_activity_url,
-                method='POST',
-                headers={
-                    "Authorization": f"token {self.hub_auth.api_token}",
-                    "Content-Type": "application/json",
-                },
-                data=json.dumps(
-                    {
-                        'servers': {
-                            self.server_name: {'last_activity': last_activity_timestamp}
-                        },
-                        'last_activity': last_activity_timestamp,
-                    }
-                ),
-            )
             try:
-                await fetch(req, **self.hub_http_client_opts)
+                await fetch(
+                    self.hub_activity_url,
+                    method='POST',
+                    headers={
+                        "Authorization": f"token {self.hub_auth.api_token}",
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps(
+                        {
+                            'servers': {
+                                self.server_name: {
+                                    'last_activity': last_activity_timestamp
+                                }
+                            },
+                            'last_activity': last_activity_timestamp,
+                        }
+                    ),
+                    **self.hub_http_client_opts,
+                )
             except Exception:
                 self.log.exception("Error notifying Hub of activity")
                 return False

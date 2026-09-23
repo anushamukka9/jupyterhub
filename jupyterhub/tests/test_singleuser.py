@@ -490,3 +490,52 @@ async def test_api_403_no_cookie(app, user, full_spawn):
     # no state cookie set
     assert not r.cookies
     await user.stop()
+
+
+async def test_notify_activity_posts_json_to_hub(monkeypatch):
+    """notify_activity posts the activity payload to the Hub via fetch().
+
+    Regression test for https://github.com/jupyterhub/jupyterhub/issues/5531:
+    notify() constructed a tornado HTTPRequest with a `data` keyword, which
+    tornado's HTTPRequest does not accept, so every activity notification
+    raised `TypeError: ... got an unexpected keyword argument 'data'` and the
+    Hub was never notified.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from ..singleuser import mixins
+
+    now = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
+    app = mixins.SingleUserNotebookAppMixin()
+    # log comes from the Application the mixin is combined with
+    app.log = mock.Mock()
+    app.web_app = mock.Mock()
+    app.web_app.last_activity.return_value = now
+    app.hub_auth = mock.Mock(api_token="test-token")
+    app.hub_activity_url = "http://hub/hub/api/users/testuser/activity"
+    app.server_name = ""
+    app.hub_http_client_opts = {}
+
+    calls = []
+
+    async def fake_fetch(url, **kwargs):
+        calls.append((url, kwargs))
+        response = mock.Mock()
+        response.ok = True
+        return response
+
+    monkeypatch.setattr(mixins, "fetch", fake_fetch)
+    await app.notify_activity()
+
+    assert len(calls) == 1
+    url, kwargs = calls[0]
+    assert url == "http://hub/hub/api/users/testuser/activity"
+    assert kwargs["method"] == "POST"
+    assert kwargs["headers"] == {
+        "Authorization": "token test-token",
+        "Content-Type": "application/json",
+    }
+    payload = json.loads(kwargs["data"])
+    assert payload["last_activity"] == "2026-09-22T12:00:00Z"
+    assert payload["servers"] == {"": {"last_activity": "2026-09-22T12:00:00Z"}}
